@@ -1,13 +1,8 @@
 """
-OmniGate Helper Userbot  (v4)
-- DM only (silent in groups/channels)
-- FIRST contact: clearly explains what this account is and how it works
-- Afterwards: smart keyword replies, non-repeating, varied
-- All replies are about OmniGate / pending requests / access (English)
-
-⚠️ NOTE: This runs automation on a USER account, which Telegram's ToS restricts.
-   Use a SECONDARY / throwaway account only. Auto-react raises ban risk the most —
-   it is OFF by default (set AUTO_REACT=1 only if you accept the risk).
+OmniGate Helper Userbot  (v3)
+- DM lang ang sinasagot (smart keyword + variations)
+- Lahat ng reply ay tungkol sa OmniGate / pending request / access
+- Hindi paulit-ulit; varied reactions; tahimik sa group/channel
 """
 
 import os
@@ -30,43 +25,24 @@ API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
 
-# Auto-react is OFF by default — it is the biggest ban-risk signal on a user account.
-AUTO_REACT = os.environ.get("AUTO_REACT", "0") == "1"
-REACT_CHANCE = float(os.environ.get("REACT_CHANCE", "0.5"))
+AUTO_REACT = os.environ.get("AUTO_REACT", "1") == "1"
+REACT_CHANCE = float(os.environ.get("REACT_CHANCE", "1.0"))
 REPLY_COOLDOWN = int(os.environ.get("REPLY_COOLDOWN", "30"))
 
 REACTION_POOL = ["\U0001F44D", "\U0001F525", "\U0001F44C", "\u2764\uFE0F",
                  "\U0001F389", "\U0001F60A", "\U0001F44F", "\u2728",
                  "\U0001F60D", "\U0001F4AF", "\U0001F64C", "\U0001F914"]
 
-# ── FIRST-CONTACT INTRO ───────────────────────────────────────────────
-# Shown the FIRST time a user ever messages this account. Explains what it is
-# and how it works, so people aren't confused about who they're talking to.
-INTRO_MESSAGES = [
-    (
-        "\U0001F44B Hi! This is the <b>OmniGate Helper</b> \u2014 an automated assistant "
-        "that clears <b>older pending join requests</b> so members get accepted without waiting.\n\n"
-        "\u2705 If you sent a join request, it's being approved for you automatically \u2014 "
-        "there's nothing you need to do.\n\n"
-        "If you have a different question, just ask and an admin will follow up here."
-    ),
-    (
-        "\U0001F916 Hello, and welcome! You've reached the <b>OmniGate Helper</b>.\n\n"
-        "My job is simple: I automatically accept <b>pending join requests</b> \u2014 including older "
-        "ones \u2014 so you don't have to wait for a manual approval.\n\n"
-        "\u2705 Your request is handled for you. Sit tight and you'll be in shortly."
-    ),
-]
-
 KEYWORD_RULES = [
     {
         "name": "greeting",
         "patterns": [r"\bhi\b", r"\bhello\b", r"\bhey\b", r"\byo\b",
-                     r"good (morning|afternoon|evening)"],
+                     r"kumusta", r"kamusta", r"\bmusta\b", r"good (morning|afternoon|evening)"],
         "replies": [
             "Hey there! \U0001F44B Your join request is being processed \u2014 you'll be approved automatically.",
-            "Hi! Your pending request is in the queue and will be accepted shortly. \u2705",
+            "Hi! Welcome. Your pending request is in the queue and will be accepted shortly. \u2705",
             "Hello! No action needed on your end \u2014 your request gets approved for you. \U0001F64C",
+            "Hey! \U0001F44B Just sit tight, your request is handled automatically.",
         ],
     },
     {
@@ -74,19 +50,20 @@ KEYWORD_RULES = [
         "patterns": [r"\bjoin\b", r"\baccept", r"\bpending\b", r"\brequest\b",
                      r"\bapprove", r"\bwait", r"how long", r"\bqueue\b",
                      r"how (do|can) i (get in|join)", r"let me in", r"not in yet",
-                     r"still waiting"],
+                     r"still waiting", r"\bin na\b", r"kelan", r"kailan"],
         "replies": [
             "Your join request gets approved automatically \u2014 usually within a short while. No need to re-send. \u2705",
-            "You're already in the queue. Older pending requests get cleared automatically, so just hold on. \U0001F44D",
+            "You're already in the queue. Old pending requests get cleared automatically, so just hold on. \U0001F44D",
             "No worries \u2014 pending requests are accepted for you. Give it a bit and you'll be in. \U0001F3AC",
-            "It's all automated. Your request will go through; please don't cancel or re-request.",
+            "That's all automated. Your request will go through; please don't cancel or re-request.",
             "It's being handled \u2014 approvals happen automatically, including older pending requests. \u23F3",
         ],
     },
     {
         "name": "denied_problem",
         "patterns": [r"\bdenied\b", r"\brejected\b", r"\bdeclined\b", r"\bblocked\b",
-                     r"can'?t (join|get in)", r"not working", r"\bstuck\b", r"\berror\b"],
+                     r"can'?t (join|get in)", r"not working", r"\bstuck\b", r"\berror\b",
+                     r"\bhindi ako\b", r"di pa rin", r"wala pa rin"],
         "replies": [
             "If you're still not in after a while, try sending the join request again \u2014 it'll be picked up automatically.",
             "Sometimes it takes a moment. If it's been long, re-request once and it should clear. \U0001F44D",
@@ -96,28 +73,28 @@ KEYWORD_RULES = [
     {
         "name": "what_is_this",
         "patterns": [r"what (is|are) (this|you)", r"\bwho are you\b", r"\bbot\b",
-                     r"\bautomated\b", r"\bomnigate\b", r"\bhelper\b", r"how (does|do) (this|you) work"],
+                     r"\bautomated\b", r"sino (ka|to)", r"ano (to|ito|ka)", r"\bomnigate\b",
+                     r"\bhelper\b"],
         "replies": [
-            "This account is the <b>OmniGate Helper</b> \u2014 an automated assistant that clears pending join "
-            "requests (including older ones) so members get in without a manual approval. \U0001F916",
-            "I'm the OmniGate Helper \u2014 I make sure pending requests get accepted automatically. \u2705",
+            "This account is an automated helper that takes care of pending join requests, so you don't have to wait on a manual approval. \U0001F916",
+            "I'm a helper account \u2014 I make sure pending requests get accepted automatically. \u2705",
             "Automated helper here! My job is to clear pending join requests so members get in smoothly.",
         ],
     },
     {
         "name": "help",
-        "patterns": [r"\bhelp\b", r"\bsupport\b", r"\bproblem\b",
-                     r"\bissue\b", r"\bconcern\b", r"\bask\b", r"\bquestion\b"],
+        "patterns": [r"\bhelp\b", r"\btulong\b", r"\bsupport\b", r"\bproblem\b",
+                     r"\bissue\b", r"\bconcern\b", r"\bask\b", r"\btanong\b"],
         "replies": [
             "Sure \u2014 if it's about a join request, it's handled automatically. For anything else, an admin will follow up here. \U0001F64F",
             "Happy to help. What's going on? If it's about access, your request is already being processed.",
-            "Tell me the details \u2014 if it needs a human, an admin will jump in shortly.",
+            "Tell me the details \u2014 if it needs a human, the admin will jump in shortly.",
         ],
     },
     {
         "name": "thanks",
-        "patterns": [r"\bthank", r"\bthanks\b", r"\bty\b",
-                     r"\bappreciate", r"\bnice\b", r"\bgreat\b", r"\bok\b", r"\bokay\b"],
+        "patterns": [r"\bthank", r"\bthanks\b", r"\bty\b", r"\bsalamat\b",
+                     r"\bappreciate", r"\bnice\b", r"\bgreat\b", r"\bok\b", r"\bokay\b", r"\bsige\b"],
         "replies": [
             "Anytime! Enjoy. \U0001F60A",
             "You got it \u2014 welcome in! \U0001F64C",
@@ -127,7 +104,8 @@ KEYWORD_RULES = [
     },
     {
         "name": "bye",
-        "patterns": [r"\bbye\b", r"\bgoodbye\b", r"\bcya\b", r"\bsee you\b"],
+        "patterns": [r"\bbye\b", r"\bgoodbye\b", r"\bcya\b", r"\bsee you\b",
+                     r"\bingat\b", r"\bpaalam\b"],
         "replies": [
             "Take care! \U0001F44B",
             "See you around \u2014 welcome aboard!",
@@ -146,7 +124,7 @@ DEFAULT_REPLIES = [
 _last_reply_time = {}
 _last_reply_text = {}
 _last_emoji = {}
-_seen_users = set()          # users who have messaged before (so intro shows once)
+_seen_users = set()
 _msg_count = defaultdict(int)
 
 
@@ -179,10 +157,7 @@ def match_rule(text):
     return None
 
 
-def build_reply(user_id, text, is_first_contact):
-    # On the very first message, always lead with the clear intro
-    if is_first_contact:
-        return pick_non_repeating(user_id, INTRO_MESSAGES)
+def build_reply(user_id, text):
     rule = match_rule(text)
     if rule:
         return pick_non_repeating(user_id, rule["replies"])
@@ -206,9 +181,7 @@ async def handle_dm(event):
     user_id = event.sender_id
     text = event.raw_text or ""
     _msg_count[user_id] += 1
-    is_first_contact = user_id not in _seen_users
 
-    # Optional auto-react (OFF by default — raises ban risk)
     if AUTO_REACT and random.random() < REACT_CHANCE:
         try:
             choices = [e for e in REACTION_POOL if e != _last_emoji.get(user_id)] or REACTION_POOL
@@ -221,33 +194,30 @@ async def handle_dm(event):
         except Exception as e:
             log.warning("React failed: %s", e)
 
-    # First contact always gets the intro (bypasses cooldown so it's never missed)
-    if not is_first_contact and on_cooldown(user_id):
+    if on_cooldown(user_id):
         log.info("Skipped reply to %s (cooldown)", user_id)
         _seen_users.add(user_id)
         return
 
-    reply = build_reply(user_id, text, is_first_contact)
+    reply = build_reply(user_id, text)
     _seen_users.add(user_id)
-    _last_reply_time[user_id] = time.time()
 
     try:
         async with client.action(event.chat_id, "typing"):
             await asyncio.sleep(min(1.5 + len(reply) * 0.01, 4))
-        await event.reply(reply, parse_mode="html")
-        log.info("Replied to %s (%s): %.50s",
-                 user_id, "intro" if is_first_contact else "keyword", reply)
+        await event.reply(reply)
+        log.info("Replied to %s: %.50s", user_id, reply)
     except Exception as e:
         log.warning("Reply failed: %s", e)
 
 
 def main():
     if not SESSION_STRING:
-        log.error("No SESSION_STRING. Run login.py locally first to generate one.")
+        log.error("Walang SESSION_STRING. Run login.py locally muna.")
         return
-    log.info("OmniGate Helper userbot (v4) starting...")
+    log.info("OmniGate Helper userbot (v3) starting...")
     client.start()
-    log.info("Online. First-contact intro + keyword DM replies active. AUTO_REACT=%s", AUTO_REACT)
+    log.info("Online. OmniGate-focused DM replies + varied reactions active.")
     client.run_until_disconnected()
 
 
