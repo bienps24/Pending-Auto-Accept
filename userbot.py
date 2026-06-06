@@ -44,24 +44,31 @@ REACTION_POOL = ["\U0001F44D", "\U0001F525", "\U0001F44C", "\u2764\uFE0F",
 # and how it works, so people aren't confused about who they're talking to.
 INTRO_MESSAGES = [
     (
-        "\U0001F44B Hi! This is the <b>OmniGate Helper</b>, the assistant for "
+        "\U0001F44B Hi! This is the <b>OmniGate Helper</b>, working alongside the main bot "
         "<b>@omnigatebot</b>.\n\n"
-        "I automatically accept <b>pending join requests</b> \u2014 including older ones \u2014 "
-        "so you get into the group or channel without waiting for a manual approval.\n\n"
-        "\U0001F512 <b>This is completely safe.</b> Getting accepted this way is the normal, "
-        "official approval process \u2014 nothing is required from you, and your account is never "
-        "at risk.\n\n"
-        "\u2705 Your request is being handled for you. Just sit tight and you'll be in shortly. "
-        "If you have an OmniGate question, feel free to ask."
+        "I was added to help clear the <b>large backlog of old pending join requests</b> in your "
+        "group or channel \u2014 the ones from before OmniGate was set up. I accept them "
+        "<b>automatically</b>, which the main bot can't do on its own.\n\n"
+        "\U0001F512 <b>This is completely safe.</b> I only approve people who already requested to "
+        "join. I never touch your settings, never ask for codes or payment, and your account is "
+        "never at risk.\n\n"
+        "\u2699\uFE0F <b>Commands (send here in this chat):</b>\n"
+        "\u2022 <code>/autoacceptoff</code> \u2014 stop auto-accepting old pending requests\n"
+        "\u2022 <code>/autoaccepton</code> \u2014 resume auto-accepting\n\n"
+        "Any OmniGate questions? Just ask."
     ),
     (
-        "\U0001F916 Hello and welcome! You've reached the <b>OmniGate Helper</b>, working "
-        "alongside the main bot <b>@omnigatebot</b>.\n\n"
-        "My job is simple and <b>100% safe</b>: I automatically approve <b>pending join "
-        "requests</b> (even older ones) so members get in smoothly \u2014 no manual wait, "
-        "no action needed on your side, and your account stays perfectly safe.\n\n"
-        "\u2705 You're being approved for you. Relax \u2014 you'll be in shortly. "
-        "Any OmniGate questions? Just ask."
+        "\U0001F916 Hello! You've reached the <b>OmniGate Helper</b>, the companion to "
+        "<b>@omnigatebot</b>.\n\n"
+        "Your group/channel had a <b>big backlog of old pending requests</b> (from before OmniGate), "
+        "so I was added to <b>accept them automatically</b> \u2014 something the main bot can't do for "
+        "older requests on its own.\n\n"
+        "\U0001F512 <b>100% safe:</b> I only approve users who already asked to join. I never change "
+        "your settings, never ask for logins, codes, or money, and your account stays perfectly safe.\n\n"
+        "\u2699\uFE0F <b>Commands (just send them here):</b>\n"
+        "\u2022 <code>/autoacceptoff</code> \u2014 turn OFF auto-accept\n"
+        "\u2022 <code>/autoaccepton</code> \u2014 turn it back ON\n\n"
+        "Feel free to ask any OmniGate question."
     ),
 ]
 
@@ -132,9 +139,15 @@ KEYWORD_RULES = [
         "patterns": [r"\bhelp\b", r"\bsupport\b", r"\bproblem\b",
                      r"\bissue\b", r"\bconcern\b", r"\bask\b", r"\bquestion\b"],
         "replies": [
-            "Sure \u2014 if it's about a join request, it's handled automatically. For anything else, an admin will follow up here. \U0001F64F",
-            "Happy to help. What's going on? If it's about access, your request is already being processed.",
-            "Tell me the details \u2014 if it needs a human, an admin will jump in shortly.",
+            "\u2699\uFE0F <b>OmniGate Helper commands:</b>\n"
+            "\u2022 <code>/autoacceptoff</code> \u2014 stop auto-accepting old pending requests\n"
+            "\u2022 <code>/autoaccepton</code> \u2014 resume auto-accepting\n\n"
+            "If it's about a join request, it's handled automatically. For anything else about "
+            "@omnigatebot, just ask. \U0001F64F",
+            "Happy to help! \u2699\uFE0F You can send <code>/autoacceptoff</code> to stop auto-accepting, "
+            "or <code>/autoaccepton</code> to resume. Anything else about OmniGate \u2014 ask away.",
+            "Sure \u2014 the main commands are <code>/autoacceptoff</code> and <code>/autoaccepton</code>. "
+            "For other OmniGate questions, the admin tools live in @omnigatebot. \U0001F64C",
         ],
     },
     {
