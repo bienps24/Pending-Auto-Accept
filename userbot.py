@@ -1,10 +1,8 @@
 """
-OmniGate Helper Userbot  (v2 — adaptive)
+OmniGate Helper Userbot  (v3)
 - DM lang ang sinasagot (smart keyword + variations)
-- Hindi paulit-ulit: iniiwasan ang parehong reply sa parehong tao
-- Varied reactions, hindi laging nagrereact (mas natural)
-- HINDI sumasagot sa group/channel
-- Pending join requests = OmniGate bot ang bahala
+- Lahat ng reply ay tungkol sa OmniGate / pending request / access
+- Hindi paulit-ulit; varied reactions; tahimik sa group/channel
 """
 
 import os
@@ -20,10 +18,7 @@ from telethon.sessions import StringSession
 from telethon.tl.types import ReactionEmoji
 from telethon.tl.functions.messages import SendReactionRequest
 
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 log = logging.getLogger("userbot")
 
 API_ID = int(os.environ["API_ID"])
@@ -44,95 +39,86 @@ KEYWORD_RULES = [
         "patterns": [r"\bhi\b", r"\bhello\b", r"\bhey\b", r"\byo\b",
                      r"kumusta", r"kamusta", r"\bmusta\b", r"good (morning|afternoon|evening)"],
         "replies": [
-            "Hey there! \U0001F44B You're all set \u2014 your join request is handled automatically.",
-            "Hi! Welcome aboard. Everything's been taken care of on our end. \U0001F64C",
-            "Hello! Glad to have you here. Anything you need, just ask.",
-            "Hey! \U0001F44B You're good to go. Let me know if you have any questions.",
+            "Hey there! \U0001F44B Your join request is being processed \u2014 you'll be approved automatically.",
+            "Hi! Welcome. Your pending request is in the queue and will be accepted shortly. \u2705",
+            "Hello! No action needed on your end \u2014 your request gets approved for you. \U0001F64C",
+            "Hey! \U0001F44B Just sit tight, your request is handled automatically.",
         ],
     },
     {
-        "name": "join",
+        "name": "join_pending",
         "patterns": [r"\bjoin\b", r"\baccept", r"\bpending\b", r"\brequest\b",
-                     r"\bapprove", r"how (do|can) i (get in|join)", r"let me in"],
+                     r"\bapprove", r"\bwait", r"how long", r"\bqueue\b",
+                     r"how (do|can) i (get in|join)", r"let me in", r"not in yet",
+                     r"still waiting", r"\bin na\b", r"kelan", r"kailan"],
         "replies": [
-            "No worries \u2014 your request gets approved automatically, usually within seconds. \u2705",
-            "You're already in the queue. It clears on its own in a moment. \U0001F44D",
-            "All join requests are auto-approved here, so just sit tight. \U0001F3AC",
-            "That's handled automatically \u2014 give it a few seconds and you'll be in.",
+            "Your join request gets approved automatically \u2014 usually within a short while. No need to re-send. \u2705",
+            "You're already in the queue. Old pending requests get cleared automatically, so just hold on. \U0001F44D",
+            "No worries \u2014 pending requests are accepted for you. Give it a bit and you'll be in. \U0001F3AC",
+            "That's all automated. Your request will go through; please don't cancel or re-request.",
+            "It's being handled \u2014 approvals happen automatically, including older pending requests. \u23F3",
         ],
     },
     {
-        "name": "vip",
-        "patterns": [r"\bvip\b", r"\bpremium\b", r"\bsubscribe", r"\bsub\b",
-                     r"\bunlock\b", r"\bexclusive\b"],
+        "name": "denied_problem",
+        "patterns": [r"\bdenied\b", r"\brejected\b", r"\bdeclined\b", r"\bblocked\b",
+                     r"can'?t (join|get in)", r"not working", r"\bstuck\b", r"\berror\b",
+                     r"\bhindi ako\b", r"di pa rin", r"wala pa rin"],
         "replies": [
-            "For VIP access, check the menu inside the bot \u2014 all the options are there. \U0001F3AC",
-            "VIP details are in the pinned post and the bot menu. Worth a look! \u2728",
-            "You can grab VIP straight from the bot. Tap the menu to see what's included.",
-            "Premium unlocks the exclusive content \u2014 full breakdown is in the bot menu. \U0001F513",
+            "If you're still not in after a while, try sending the join request again \u2014 it'll be picked up automatically.",
+            "Sometimes it takes a moment. If it's been long, re-request once and it should clear. \U0001F44D",
+            "No problem \u2014 re-send the join request and it'll be processed. Let me know if it still doesn't work.",
         ],
     },
     {
-        "name": "payment",
-        "patterns": [r"\bpay\b", r"\bpayment\b", r"\bgcash\b", r"\bstars?\b",
-                     r"\bbayad\b", r"\bprice\b", r"\bcost\b", r"\bmagkano\b",
-                     r"how much", r"\bbuy\b"],
+        "name": "what_is_this",
+        "patterns": [r"what (is|are) (this|you)", r"\bwho are you\b", r"\bbot\b",
+                     r"\bautomated\b", r"sino (ka|to)", r"ano (to|ito|ka)", r"\bomnigate\b",
+                     r"\bhelper\b"],
         "replies": [
-            "Payments run through Telegram Stars right inside the bot \u2014 quick and secure. \u2B50",
-            "Just tap the menu in the bot to see pricing and pay with Stars. \u2B50",
-            "Everything's paid via Telegram Stars in-app. No external links needed. \U0001F44D",
-            "Pricing and payment are all in the bot menu \u2014 Stars only, nice and simple.",
+            "This account is an automated helper that takes care of pending join requests, so you don't have to wait on a manual approval. \U0001F916",
+            "I'm a helper account \u2014 I make sure pending requests get accepted automatically. \u2705",
+            "Automated helper here! My job is to clear pending join requests so members get in smoothly.",
         ],
     },
     {
         "name": "help",
         "patterns": [r"\bhelp\b", r"\btulong\b", r"\bsupport\b", r"\bproblem\b",
-                     r"\bissue\b", r"\bbug\b", r"\bstuck\b", r"\bnot working\b",
-                     r"can'?t\b", r"\berror\b"],
+                     r"\bissue\b", r"\bconcern\b", r"\bask\b", r"\btanong\b"],
         "replies": [
-            "Got it \u2014 drop the details here and the admin will follow up shortly. \U0001F64F",
-            "Sure, I can pass this along. What exactly are you running into?",
-            "Tell me what's happening and I'll make sure it gets looked at.",
-            "No problem. Send over the details and we'll sort it out for you.",
+            "Sure \u2014 if it's about a join request, it's handled automatically. For anything else, an admin will follow up here. \U0001F64F",
+            "Happy to help. What's going on? If it's about access, your request is already being processed.",
+            "Tell me the details \u2014 if it needs a human, the admin will jump in shortly.",
         ],
     },
     {
         "name": "thanks",
         "patterns": [r"\bthank", r"\bthanks\b", r"\bty\b", r"\bsalamat\b",
-                     r"\bappreciate", r"\bnice\b", r"\bgreat\b", r"\bawesome\b"],
+                     r"\bappreciate", r"\bnice\b", r"\bgreat\b", r"\bok\b", r"\bokay\b", r"\bsige\b"],
         "replies": [
             "Anytime! Enjoy. \U0001F60A",
-            "You got it. Happy to help! \U0001F64C",
-            "No problem at all \u2014 have fun!",
-            "Glad I could help. Take care! \U0001F44D",
+            "You got it \u2014 welcome in! \U0001F64C",
+            "No problem at all. \U0001F44D",
+            "Glad to help. Take care!",
         ],
     },
     {
         "name": "bye",
         "patterns": [r"\bbye\b", r"\bgoodbye\b", r"\bcya\b", r"\bsee you\b",
-                     r"\bgtg\b", r"\bingat\b", r"\bpaalam\b"],
+                     r"\bingat\b", r"\bpaalam\b"],
         "replies": [
-            "Catch you later! \U0001F44B",
-            "Take care! See you around.",
-            "Later! Reach out anytime you need something.",
-        ],
-    },
-    {
-        "name": "question",
-        "patterns": [r"\?$", r"^(what|how|why|when|where|who|can|is|are|do|does)\b"],
-        "replies": [
-            "Good question \u2014 the bot menu has most of the answers. If not, the admin will jump in.",
-            "Let me point you to the bot menu first; if you're still stuck, just say so.",
-            "Most of that is covered in the bot menu. Anything specific I can clear up?",
+            "Take care! \U0001F44B",
+            "See you around \u2014 welcome aboard!",
+            "Later! Reach out anytime.",
         ],
     },
 ]
 
 DEFAULT_REPLIES = [
-    "Thanks for reaching out! You're all set here \u2014 the bot handles the rest. \U0001F916",
-    "Got your message! Everything's running automatically. Let me know if you need anything.",
-    "Appreciate the message! If you have a question, the bot menu's a good place to start.",
-    "Noted! You're good to go. An admin will chime in if anything needs a human. \U0001F64C",
+    "Thanks for reaching out! If this is about a join request, it's being approved automatically \u2014 no action needed. \u2705",
+    "Got your message! Your pending request is handled for you. An admin will reply if anything else is needed. \U0001F916",
+    "Noted! Access is taken care of automatically. Let me know if you have a specific question.",
+    "You're all set \u2014 pending requests get accepted automatically. \U0001F64C",
 ]
 
 _last_reply_time = {}
@@ -173,19 +159,9 @@ def match_rule(text):
 
 def build_reply(user_id, text):
     rule = match_rule(text)
-    is_first_time = user_id not in _seen_users
     if rule:
-        reply = pick_non_repeating(user_id, rule["replies"])
-    else:
-        reply = pick_non_repeating(user_id, DEFAULT_REPLIES)
-    if is_first_time and (rule is None or rule["name"] in ("greeting", "join")):
-        intro = random.choice([
-            "",
-            " (This account's automated to help with access \u2014 real admins step in when needed.)",
-            "",
-        ])
-        reply = reply + intro
-    return reply
+        return pick_non_repeating(user_id, rule["replies"])
+    return pick_non_repeating(user_id, DEFAULT_REPLIES)
 
 
 if SESSION_STRING:
@@ -239,9 +215,9 @@ def main():
     if not SESSION_STRING:
         log.error("Walang SESSION_STRING. Run login.py locally muna.")
         return
-    log.info("OmniGate Helper userbot (v2 adaptive) starting...")
+    log.info("OmniGate Helper userbot (v3) starting...")
     client.start()
-    log.info("Online. Adaptive DM replies + varied reactions active.")
+    log.info("Online. OmniGate-focused DM replies + varied reactions active.")
     client.run_until_disconnected()
 
 
