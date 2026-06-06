@@ -176,6 +176,7 @@ _last_reply_time = {}
 _last_reply_text = {}
 _last_emoji = {}
 _seen_users = set()          # users who have messaged before (so intro shows once)
+_auto_accept_off = set()     # admins who turned auto-accept OFF (in-memory, this session)
 _msg_count = defaultdict(int)
 
 
@@ -236,6 +237,31 @@ async def handle_dm(event):
     text = event.raw_text or ""
     _msg_count[user_id] += 1
     is_first_contact = user_id not in _seen_users
+
+    # ── Commands (checked first) ──────────────────────────────────────
+    cmd = text.strip().lower()
+    if cmd.startswith("/autoacceptoff"):
+        _auto_accept_off.add(user_id)
+        _seen_users.add(user_id)
+        await event.reply(
+            "\U0001F6D1 <b>Auto-accept turned OFF.</b>\n\n"
+            "The OmniGate Helper will stop auto-accepting old pending requests for you. "
+            "Send <code>/autoaccepton</code> anytime to turn it back on.",
+            parse_mode="html"
+        )
+        log.info("Auto-accept OFF requested by %s", user_id)
+        return
+    if cmd.startswith("/autoaccepton"):
+        _auto_accept_off.discard(user_id)
+        _seen_users.add(user_id)
+        await event.reply(
+            "\u2705 <b>Auto-accept turned ON.</b>\n\n"
+            "The OmniGate Helper will resume auto-accepting old pending requests. "
+            "Send <code>/autoacceptoff</code> to stop it again.",
+            parse_mode="html"
+        )
+        log.info("Auto-accept ON requested by %s", user_id)
+        return
 
     # Optional auto-react (OFF by default — raises ban risk)
     if AUTO_REACT and random.random() < REACT_CHANCE:
