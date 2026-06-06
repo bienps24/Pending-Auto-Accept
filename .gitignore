@@ -1,0 +1,14 @@
+# Telethon local session files (NEVER commit these)
+*.session
+*.session-journal
+userbot_local.session
+
+# Environment / secrets
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
