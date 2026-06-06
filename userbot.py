@@ -44,17 +44,24 @@ REACTION_POOL = ["\U0001F44D", "\U0001F525", "\U0001F44C", "\u2764\uFE0F",
 # and how it works, so people aren't confused about who they're talking to.
 INTRO_MESSAGES = [
     (
-        "\U0001F44B Hi! This is the <b>OmniGate Helper</b> \u2014 an automated assistant "
-        "that clears <b>older pending join requests</b> so members get accepted without waiting.\n\n"
-        "\u2705 If you sent a join request, it's being approved for you automatically \u2014 "
-        "there's nothing you need to do.\n\n"
-        "If you have a different question, just ask and an admin will follow up here."
+        "\U0001F44B Hi! This is the <b>OmniGate Helper</b>, the assistant for "
+        "<b>@omnigatebot</b>.\n\n"
+        "I automatically accept <b>pending join requests</b> \u2014 including older ones \u2014 "
+        "so you get into the group or channel without waiting for a manual approval.\n\n"
+        "\U0001F512 <b>This is completely safe.</b> Getting accepted this way is the normal, "
+        "official approval process \u2014 nothing is required from you, and your account is never "
+        "at risk.\n\n"
+        "\u2705 Your request is being handled for you. Just sit tight and you'll be in shortly. "
+        "If you have an OmniGate question, feel free to ask."
     ),
     (
-        "\U0001F916 Hello, and welcome! You've reached the <b>OmniGate Helper</b>.\n\n"
-        "My job is simple: I automatically accept <b>pending join requests</b> \u2014 including older "
-        "ones \u2014 so you don't have to wait for a manual approval.\n\n"
-        "\u2705 Your request is handled for you. Sit tight and you'll be in shortly."
+        "\U0001F916 Hello and welcome! You've reached the <b>OmniGate Helper</b>, working "
+        "alongside the main bot <b>@omnigatebot</b>.\n\n"
+        "My job is simple and <b>100% safe</b>: I automatically approve <b>pending join "
+        "requests</b> (even older ones) so members get in smoothly \u2014 no manual wait, "
+        "no action needed on your side, and your account stays perfectly safe.\n\n"
+        "\u2705 You're being approved for you. Relax \u2014 you'll be in shortly. "
+        "Any OmniGate questions? Just ask."
     ),
 ]
 
@@ -105,6 +112,22 @@ KEYWORD_RULES = [
         ],
     },
     {
+        "name": "safety_worry",
+        "patterns": [r"\bsafe\b", r"\bscam\b", r"\blegit\b", r"\bscammer\b", r"\bfake\b",
+                     r"\bvirus\b", r"\bhack", r"\bsteal", r"\bsuspicious\b", r"\btrust\b",
+                     r"is this real", r"are you real", r"\bphishing\b", r"\bsketchy\b"],
+        "replies": [
+            "\U0001F512 Totally understandable to check! Yes \u2014 this is safe. Getting approved here is the "
+            "normal, official join process for @omnigatebot. I never ask for passwords, codes, or payment, "
+            "and your account is never at risk. You're simply being let into the group/channel. \u2705",
+            "\U0001F512 Good question \u2014 and yes, it's completely safe. I only accept pending join requests; "
+            "I'll never ask for your login, a code, or money. This is the same approval an admin would do, "
+            "just automatic. \u2705",
+            "No worries at all \u2014 this is legitimate. The OmniGate Helper only approves join requests for "
+            "@omnigatebot. Nothing is required from you and nothing about your account changes. \U0001F64C",
+        ],
+    },
+    {
         "name": "help",
         "patterns": [r"\bhelp\b", r"\bsupport\b", r"\bproblem\b",
                      r"\bissue\b", r"\bconcern\b", r"\bask\b", r"\bquestion\b"],
@@ -137,10 +160,16 @@ KEYWORD_RULES = [
 ]
 
 DEFAULT_REPLIES = [
-    "Thanks for reaching out! If this is about a join request, it's being approved automatically \u2014 no action needed. \u2705",
-    "Got your message! Your pending request is handled for you. An admin will reply if anything else is needed. \U0001F916",
-    "Noted! Access is taken care of automatically. Let me know if you have a specific question.",
-    "You're all set \u2014 pending requests get accepted automatically. \U0001F64C",
+    "I'm the <b>OmniGate Helper</b>, and I mainly assist with <b>join requests and access</b> for "
+    "@omnigatebot. If you're waiting to be let in, you're being approved automatically \u2014 nothing to "
+    "do on your end. \u2705\n\nFor topics outside OmniGate I won't be able to help, but feel free to ask "
+    "anything about OmniGate or your access!",
+    "I can only help with <b>OmniGate</b> topics \u2014 mainly getting you accepted into the group or "
+    "channel. \u2705 Your pending request is handled for you automatically.\n\nIf your question is about "
+    "OmniGate or your access, ask away!",
+    "I'm focused on <b>OmniGate</b> and join requests, so I may not understand other topics. \U0001F916 "
+    "If you're trying to get in, no action is needed \u2014 you're approved automatically.\n\nGot an "
+    "OmniGate question? I'm happy to help.",
 ]
 
 _last_reply_time = {}
