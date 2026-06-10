@@ -35,6 +35,47 @@ AUTO_REACT = os.environ.get("AUTO_REACT", "0") == "1"
 REACT_CHANCE = float(os.environ.get("REACT_CHANCE", "0.5"))
 REPLY_COOLDOWN = int(os.environ.get("REPLY_COOLDOWN", "30"))
 
+# ── Gemini AI (optional) ──────────────────────────────────────────────
+# Uses the SAME key as the main bot. If unset, fails, or is rate-limited, the
+# userbot automatically falls back to the keyword replies below.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+# Persona/grounding the AI must stay within. Keeps answers accurate & on-topic.
+AI_SYSTEM_PROMPT = (
+    "You are the 'OmniGate Helper', a friendly assistant that works alongside the main "
+    "Telegram bot @omnigatebot. You are talking in DM to a GROUP/CHANNEL ADMIN.\n\n"
+    "WHO YOU ARE:\n"
+    "- You were auto-added to help clear a large backlog of OLD pending join requests "
+    "(from before OmniGate was set up). You accept those old pending requests automatically, "
+    "which the main bot cannot do on its own.\n"
+    "- You are SAFE: you only approve users who already requested to join. You never change "
+    "the admin's settings, never ask for passwords, login codes, or payment.\n\n"
+    "STRICT TOPIC LOCK — THIS IS YOUR MOST IMPORTANT RULE:\n"
+    "You ONLY talk about OmniGate (@omnigatebot): join requests, pending requests, access, "
+    "approvals, safety of this process, and the two commands below. NOTHING ELSE.\n"
+    "If the user asks about ANYTHING outside OmniGate — general knowledge, coding, math, news, "
+    "advice, jokes, other apps, personal questions, 'what can you do', 'who are you' beyond your "
+    "OmniGate role, etc. — you MUST politely REFUSE and redirect. Do NOT answer the off-topic part "
+    "at all, not even briefly. Always bring it back to OmniGate.\n"
+    "Example refusal: 'I can only help with OmniGate and your group's join requests. Is there "
+    "anything about OmniGate or your pending members I can help with?'\n\n"
+    "COMMANDS the admin can send you in this chat:\n"
+    "- /autoacceptoff  -> stop auto-accepting old pending requests\n"
+    "- /autoaccepton   -> resume auto-accepting\n\n"
+    "RULES:\n"
+    "- ALWAYS reply in ENGLISH only, regardless of what language the user writes in. "
+    "Never reply in Tagalog or any other language.\n"
+    "- Keep replies SHORT (1-3 sentences), warm, and clear.\n"
+    "- Stay 100% on OmniGate. When in doubt whether something is on-topic, treat it as off-topic "
+    "and redirect.\n"
+    "- For detailed OmniGate features/pricing/settings: give a brief answer and point to the main "
+    "bot @omnigatebot. Do NOT invent specifics, prices, or settings.\n"
+    "- Never claim to be a human. Never ask for passwords, codes, or payment.\n"
+    "- Plain text only. No markdown, no code blocks."
+)
+
 REACTION_POOL = ["\U0001F44D", "\U0001F525", "\U0001F44C", "\u2764\uFE0F",
                  "\U0001F389", "\U0001F60A", "\U0001F44F", "\u2728",
                  "\U0001F60D", "\U0001F4AF", "\U0001F64C", "\U0001F914"]
@@ -222,6 +263,52 @@ def match_rule(text):
     return None
 
 
+# Short rolling conversation history per user (for AI context). Kept tiny on purpose.
+_history = defaultdict(list)  # user_id -> [("user"/"model", text), ...]
+_HISTORY_MAX = 6
+
+
+async def ai_reply(user_id, text):
+    """Try Gemini for a natural reply. Returns None on any failure so the caller
+    can fall back to keyword replies. Keeps a short history for context."""
+    if not GEMINI_API_KEY or not text.strip():
+        return None
+
+    # Build the conversation: system grounding + recent turns + this message
+    contents = [{"role": "user", "parts": [{"text": AI_SYSTEM_PROMPT}]},
+                {"role": "model", "parts": [{"text": "Understood. I'll help with OmniGate only."}]}]
+    for role, msg in _history[user_id][-_HISTORY_MAX:]:
+        contents.append({"role": role, "parts": [{"text": msg}]})
+    contents.append({"role": "user", "parts": [{"text": text[:800]}]})
+
+    payload = {
+        "contents": contents,
+        "generationConfig": {"temperature": 0.6, "maxOutputTokens": 180},
+    }
+    try:
+        import requests
+        resp = await asyncio.to_thread(
+            requests.post,
+            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+            json=payload, timeout=20,
+        )
+        if resp.status_code != 200:
+            log.warning("Gemini HTTP %s — falling back to keywords", resp.status_code)
+            return None
+        data = resp.json()
+        out = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if not out:
+            return None
+        # Record turns for context
+        _history[user_id].append(("user", text[:800]))
+        _history[user_id].append(("model", out))
+        _history[user_id] = _history[user_id][-_HISTORY_MAX:]
+        return out
+    except Exception as e:
+        log.warning("AI reply failed (%s) — falling back to keywords", e)
+        return None
+
+
 def build_reply(user_id, text, is_first_contact):
     # On the very first message, always lead with the clear intro
     if is_first_contact:
@@ -295,7 +382,13 @@ async def handle_dm(event):
         _seen_users.add(user_id)
         return
 
-    reply = build_reply(user_id, text, is_first_contact)
+    # First contact: fixed intro (with safety + commands). Otherwise: AI first, keyword fallback.
+    if is_first_contact:
+        reply = pick_non_repeating(user_id, INTRO_MESSAGES)
+    else:
+        reply = await ai_reply(user_id, text)
+        if not reply:
+            reply = build_reply(user_id, text, False)
     _seen_users.add(user_id)
     _last_reply_time[user_id] = time.time()
 
