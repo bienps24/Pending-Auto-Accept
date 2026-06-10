@@ -288,18 +288,30 @@ async def ai_reply(user_id, text):
         "contents": contents,
         "generationConfig": {"temperature": 0.6, "maxOutputTokens": 180},
     }
-    try:
-        import requests
-        resp = await asyncio.to_thread(
-            requests.post,
-            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
-            json=payload, timeout=20,
+
+    def _do_request():
+        """Blocking HTTP POST using only the Python standard library (no 'requests' needed)."""
+        import json as _json
+        import urllib.request
+        import urllib.error
+        url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
+        body = _json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"}, method="POST"
         )
-        if resp.status_code != 200:
-            log.warning("Gemini HTTP %s: %s — falling back to keywords",
-                        resp.status_code, resp.text[:300])
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.status, r.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8", errors="replace")
+
+    try:
+        import json as _json
+        status, raw = await asyncio.to_thread(_do_request)
+        if status != 200:
+            log.warning("Gemini HTTP %s: %s — falling back to keywords", status, raw[:300])
             return None
-        data = resp.json()
+        data = _json.loads(raw)
         out = data["candidates"][0]["content"]["parts"][0]["text"].strip()
         if not out:
             log.warning("Gemini returned empty text — falling back to keywords")
@@ -412,7 +424,7 @@ def main():
     if not SESSION_STRING:
         log.error("No SESSION_STRING. Run login.py locally first to generate one.")
         return
-    log.info("OmniGate Helper userbot (v11) starting...")
+    log.info("OmniGate Helper userbot (v12) starting...")
     if GEMINI_API_KEY:
         log.info("Gemini AI: ENABLED (key detected, model=%s)", GEMINI_MODEL)
     else:
