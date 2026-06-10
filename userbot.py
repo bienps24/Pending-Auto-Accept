@@ -271,7 +271,10 @@ _HISTORY_MAX = 6
 async def ai_reply(user_id, text):
     """Try Gemini for a natural reply. Returns None on any failure so the caller
     can fall back to keyword replies. Keeps a short history for context."""
-    if not GEMINI_API_KEY or not text.strip():
+    if not GEMINI_API_KEY:
+        log.warning("AI skipped: GEMINI_API_KEY is NOT set in this service — using keyword replies.")
+        return None
+    if not text.strip():
         return None
 
     # Build the conversation: system grounding + recent turns + this message
@@ -293,16 +296,19 @@ async def ai_reply(user_id, text):
             json=payload, timeout=20,
         )
         if resp.status_code != 200:
-            log.warning("Gemini HTTP %s — falling back to keywords", resp.status_code)
+            log.warning("Gemini HTTP %s: %s — falling back to keywords",
+                        resp.status_code, resp.text[:300])
             return None
         data = resp.json()
         out = data["candidates"][0]["content"]["parts"][0]["text"].strip()
         if not out:
+            log.warning("Gemini returned empty text — falling back to keywords")
             return None
         # Record turns for context
         _history[user_id].append(("user", text[:800]))
         _history[user_id].append(("model", out))
         _history[user_id] = _history[user_id][-_HISTORY_MAX:]
+        log.info("AI replied to %s: %.60s", user_id, out)
         return out
     except Exception as e:
         log.warning("AI reply failed (%s) — falling back to keywords", e)
@@ -406,9 +412,14 @@ def main():
     if not SESSION_STRING:
         log.error("No SESSION_STRING. Run login.py locally first to generate one.")
         return
-    log.info("OmniGate Helper userbot (v4) starting...")
+    log.info("OmniGate Helper userbot (v11) starting...")
+    if GEMINI_API_KEY:
+        log.info("Gemini AI: ENABLED (key detected, model=%s)", GEMINI_MODEL)
+    else:
+        log.warning("Gemini AI: DISABLED — GEMINI_API_KEY not set. Add it in this service's "
+                    "Variables to enable natural replies. Using keyword replies for now.")
     client.start()
-    log.info("Online. First-contact intro + keyword DM replies active. AUTO_REACT=%s", AUTO_REACT)
+    log.info("Online. AUTO_REACT=%s, REPLY_COOLDOWN=%ss", AUTO_REACT, REPLY_COOLDOWN)
     client.run_until_disconnected()
 
 
