@@ -1,6 +1,9 @@
 """
-OmniGate Helper Userbot  (v14)
+OmniGate Helper Userbot  (v15)
 - DM only (silent in groups/channels)
+- LIVE KNOWLEDGE: pulls real OmniGate facts from omnigate.info/facts.json so the
+  AI answers "who made this", pricing, features, etc. correctly (auto-updates,
+  no redeploy needed). Falls back to built-in facts if the site is unreachable.
 - FIRST contact: clearly explains what this account is and how it works
 - Debounced replies: rapid multi-message users get ONE combined, coherent answer
 - Gemini AI with truncation fix (no more cut-off replies), retry, HTML-safe output
@@ -30,7 +33,7 @@ from telethon.tl.functions.messages import SendReactionRequest
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 log = logging.getLogger("userbot")
 
-VERSION = "14"
+VERSION = "15"
 
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
@@ -64,23 +67,39 @@ GEMINI_MAX_TOKENS = int(os.environ.get("GEMINI_MAX_TOKENS", "400"))
 GEMINI_RETRIES = 2          # total attempts on 429/5xx
 GEMINI_RETRY_DELAY = 2.0    # seconds between attempts
 
-# Persona/grounding the AI must stay within. Keeps answers accurate & on-topic.
-AI_SYSTEM_PROMPT = (
+# ── Live knowledge base ───────────────────────────────────────────────
+# The bot pulls real OmniGate facts from this URL and feeds them to the AI so it
+# answers accurately (creator, pricing, features, FAQ). Update facts.json on the
+# website and the bot picks it up on the next refresh — no redeploy needed.
+FACTS_URL = os.environ.get("FACTS_URL", "https://omnigate.info/facts.json")
+FACTS_REFRESH_SECONDS = int(os.environ.get("FACTS_REFRESH_SECONDS", "3600"))  # hourly
+
+# Persona/grounding the AI must stay within. The {KNOWLEDGE} block is filled in at
+# runtime with real facts pulled from omnigate.info/facts.json.
+AI_SYSTEM_PROMPT_TEMPLATE = (
     "You are the 'OmniGate Helper', a friendly assistant that works alongside the main "
-    "Telegram bot @omnigatebot. You are talking in DM to a GROUP/CHANNEL ADMIN.\n\n"
+    "Telegram bot @OmniGateBot. You are talking in DM to a GROUP/CHANNEL ADMIN.\n\n"
     "WHO YOU ARE:\n"
     "- You were auto-added to help clear a large backlog of OLD pending join requests "
     "(from before OmniGate was set up). You accept those old pending requests automatically, "
     "which the main bot cannot do on its own.\n"
     "- You are SAFE: you only approve users who already requested to join. You never change "
     "the admin's settings, never ask for passwords, login codes, or payment.\n\n"
+    "=== VERIFIED OMNIGATE FACTS (your ONLY source of truth — never contradict or invent beyond this) ===\n"
+    "{KNOWLEDGE}\n"
+    "=== END FACTS ===\n\n"
+    "HOW TO USE THE FACTS:\n"
+    "- When asked about OmniGate — what it is, who made it, pricing, features, languages, "
+    "setup, safety, permissions — answer using ONLY the facts above, in your own warm words.\n"
+    "- If the facts above don't cover something (e.g. a specific detail that isn't listed), say "
+    "you're not sure and point them to the main bot @OmniGateBot or support, rather than guessing. "
+    "NEVER invent prices, names, dates, or features that aren't in the facts.\n\n"
     "STRICT TOPIC LOCK — THIS IS YOUR MOST IMPORTANT RULE:\n"
-    "You ONLY talk about OmniGate (@omnigatebot): join requests, pending requests, access, "
-    "approvals, safety of this process, and the commands below. NOTHING ELSE.\n"
+    "You ONLY talk about OmniGate: what it is, who made it, join requests, pending requests, "
+    "access, approvals, features, pricing, safety, and the commands below. NOTHING ELSE.\n"
     "If the user asks about ANYTHING outside OmniGate — general knowledge, coding, math, news, "
-    "advice, jokes, other apps, personal questions, 'what can you do', 'who are you' beyond your "
-    "OmniGate role, etc. — you MUST politely REFUSE and redirect. Do NOT answer the off-topic part "
-    "at all, not even briefly. Always bring it back to OmniGate.\n"
+    "advice, jokes, other apps, unrelated personal questions — you MUST politely REFUSE and "
+    "redirect. Do NOT answer the off-topic part at all. Always bring it back to OmniGate.\n"
     "Example refusal: 'I can only help with OmniGate and your group's join requests. Is there "
     "anything about OmniGate or your pending members I can help with?'\n\n"
     "COMMANDS the admin can send you in this chat:\n"
@@ -91,17 +110,85 @@ AI_SYSTEM_PROMPT = (
     "NOTE: The user's message may contain several short lines — that just means they sent "
     "multiple quick messages. Read them together as ONE question and give ONE answer.\n\n"
     "RULES:\n"
-    "- ALWAYS reply in ENGLISH only, regardless of what language the user writes in. "
-    "Never reply in Tagalog or any other language.\n"
+    "- ALWAYS reply in ENGLISH only, regardless of what language the user writes in.\n"
     "- Keep replies SHORT (1-3 sentences), warm, clear, and COMPLETE — always finish your "
-    "sentence, never trail off.\n"
-    "- Stay 100% on OmniGate. When in doubt whether something is on-topic, treat it as off-topic "
-    "and redirect.\n"
-    "- For detailed OmniGate features/pricing/settings: give a brief answer and point to the main "
-    "bot @omnigatebot. Do NOT invent specifics, prices, or settings.\n"
+    "sentence, never trail off. Sound like a helpful human, not a robot reading a script.\n"
+    "- Stay 100% on OmniGate. When in doubt, redirect.\n"
     "- Never claim to be a human. Never ask for passwords, codes, or payment.\n"
     "- Plain text only. No markdown, no code blocks, no asterisks."
 )
+
+# Built-in fallback facts — used only if omnigate.info/facts.json can't be fetched
+# at startup, so the bot is never clueless. Mirrors the website content.
+FALLBACK_FACTS = {
+    "product": {
+        "name": "OmniGate",
+        "one_liner": "OmniGate is a Telegram security gateway that screens every join request, "
+                     "stops raids and scam bots, and watches for posts that could get a channel "
+                     "banned. Works for private and public groups and channels, 24/7.",
+        "main_bot": "@OmniGateBot",
+        "website": "https://omnigate.info",
+        "support": "https://t.me/omnigatesupport",
+        "affiliation": "OmniGate is independent and not affiliated with Telegram.",
+    },
+    "creator": "OmniGate is an independent project built by a solo indie developer. It is not "
+               "affiliated with Telegram. For more, reach the team via @omnigatesupport.",
+    "features_free": ["Join gating & captcha", "Flood & raid defense", "Banned words",
+                      "Warnings", "Network ban shield"],
+    "features_premium": ["AI smart detection", "ToS risk scanner", "Auto-moderation",
+                         "Country filter", "Growth analytics + CSV export"],
+    "pricing": {"currency": "TON", "trial": "Every plan starts with a 3-day free trial that "
+                "the admin turns on themselves; it never auto-activates or auto-renews.",
+                "plans": ["1 month $2.99", "3 months $7.99", "6 months $14.99",
+                          "12 months $26.99 (best value)"]},
+}
+
+# Live knowledge cache (populated from FACTS_URL; falls back to FALLBACK_FACTS)
+_facts_text = ""            # pre-formatted string injected into the prompt
+_facts_fetched_at = 0.0
+
+
+def _format_facts(facts: dict) -> str:
+    """Turn the facts dict into a compact, prompt-friendly text block."""
+    try:
+        return json.dumps(facts, ensure_ascii=False, indent=1)
+    except Exception:
+        return json.dumps(FALLBACK_FACTS, ensure_ascii=False, indent=1)
+
+
+def _fetch_facts_blocking():
+    import json as _json
+    import urllib.request
+    req = urllib.request.Request(FACTS_URL, headers={"User-Agent": "OmniGateHelper/15"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return _json.loads(r.read().decode("utf-8"))
+
+
+async def refresh_facts(force=False):
+    """Fetch facts.json if the cache is stale. Never raises — keeps last good copy
+    (or the built-in fallback) on failure so the bot always has knowledge."""
+    global _facts_text, _facts_fetched_at
+    now = time.time()
+    if not force and _facts_text and (now - _facts_fetched_at) < FACTS_REFRESH_SECONDS:
+        return
+    try:
+        facts = await asyncio.to_thread(_fetch_facts_blocking)
+        _facts_text = _format_facts(facts)
+        _facts_fetched_at = now
+        ver = facts.get("version", "?")
+        log.info("Knowledge loaded from %s (version=%s, %d chars)", FACTS_URL, ver, len(_facts_text))
+    except Exception as e:
+        if not _facts_text:
+            _facts_text = _format_facts(FALLBACK_FACTS)
+            _facts_fetched_at = now
+            log.warning("Could not fetch %s (%s) — using built-in fallback facts.", FACTS_URL, e)
+        else:
+            log.warning("Facts refresh failed (%s) — keeping last good copy.", e)
+
+
+def current_system_prompt() -> str:
+    knowledge = _facts_text or _format_facts(FALLBACK_FACTS)
+    return AI_SYSTEM_PROMPT_TEMPLATE.replace("{KNOWLEDGE}", knowledge)
 
 REACTION_POOL = ["\U0001F44D", "\U0001F525", "\U0001F44C", "\u2764\uFE0F",
                  "\U0001F389", "\U0001F60A", "\U0001F44F", "\u2728",
@@ -375,9 +462,12 @@ async def ai_reply(user_id, text):
     if not text.strip():
         return None
 
-    # Build the conversation: system grounding + recent turns + this message
-    contents = [{"role": "user", "parts": [{"text": AI_SYSTEM_PROMPT}]},
-                {"role": "model", "parts": [{"text": "Understood. I'll help with OmniGate only."}]}]
+    # Make sure knowledge is fresh (cheap: only fetches when the cache is stale)
+    await refresh_facts()
+
+    # Build the conversation: system grounding (with live facts) + recent turns + this message
+    contents = [{"role": "user", "parts": [{"text": current_system_prompt()}]},
+                {"role": "model", "parts": [{"text": "Understood. I'll help with OmniGate only, using the verified facts."}]}]
     for role, msg in _history[user_id][-_HISTORY_MAX:]:
         contents.append({"role": role, "parts": [{"text": msg}]})
     contents.append({"role": "user", "parts": [{"text": text[:800]}]})
@@ -636,6 +726,11 @@ def main():
         return
     log.info("OmniGate Helper userbot (v%s) starting...", VERSION)
     load_state()
+    # Warm the knowledge cache before going online (falls back gracefully on failure)
+    try:
+        asyncio.run(refresh_facts(force=True))
+    except Exception as e:
+        log.warning("Initial facts load failed (%s) — will retry on first message.", e)
     if GEMINI_API_KEY:
         log.info("Gemini AI: ENABLED (key detected, model=%s, maxTokens=%d, thinking=OFF)",
                  GEMINI_MODEL, GEMINI_MAX_TOKENS)
