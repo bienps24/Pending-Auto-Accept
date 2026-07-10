@@ -1,9 +1,11 @@
 """
-OmniGate Helper Userbot  (v4)
+OmniGate Helper Userbot  (v14)
 - DM only (silent in groups/channels)
 - FIRST contact: clearly explains what this account is and how it works
-- Afterwards: smart keyword replies, non-repeating, varied
-- All replies are about OmniGate / pending requests / access (English)
+- Debounced replies: rapid multi-message users get ONE combined, coherent answer
+- Gemini AI with truncation fix (no more cut-off replies), retry, HTML-safe output
+- Persistent state (intro shown once, /autoacceptoff survives restarts)
+- Commands: /start /help /status /autoacceptoff /autoaccepton
 
 ⚠️ NOTE: This runs automation on a USER account, which Telegram's ToS restricts.
    Use a SECONDARY / throwaway account only. Auto-react raises ban risk the most —
@@ -12,11 +14,13 @@ OmniGate Helper Userbot  (v4)
 
 import os
 import re
+import json
 import time
+import html
 import asyncio
 import random
 import logging
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -26,6 +30,8 @@ from telethon.tl.functions.messages import SendReactionRequest
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 log = logging.getLogger("userbot")
 
+VERSION = "14"
+
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
@@ -33,7 +39,20 @@ SESSION_STRING = os.environ.get("SESSION_STRING", "")
 # Auto-react is OFF by default — it is the biggest ban-risk signal on a user account.
 AUTO_REACT = os.environ.get("AUTO_REACT", "0") == "1"
 REACT_CHANCE = float(os.environ.get("REACT_CHANCE", "0.5"))
-REPLY_COOLDOWN = int(os.environ.get("REPLY_COOLDOWN", "30"))
+
+# ── Behavior tuning ───────────────────────────────────────────────────
+# DEBOUNCE_SECONDS: how long to wait after a user's last message before replying.
+# Users often type in fragments ("hi" / "how do i join" / "still waiting") —
+# we collect them and answer ONCE, coherently, instead of spamming per-fragment.
+DEBOUNCE_SECONDS = float(os.environ.get("DEBOUNCE_SECONDS", "2.5"))
+# Soft anti-spam: max replies per user per rolling hour (silent beyond this).
+MAX_REPLIES_PER_HOUR = int(os.environ.get("MAX_REPLIES_PER_HOUR", "20"))
+
+# ── Persistent state ──────────────────────────────────────────────────
+# Survives restarts so users don't get the intro twice and /autoacceptoff sticks.
+# On Railway, attach a Volume and set STATE_FILE=/data/state.json for persistence
+# across redeploys (without a volume it still survives normal restarts).
+STATE_FILE = os.environ.get("STATE_FILE", "state.json")
 
 # ── Gemini AI (optional) ──────────────────────────────────────────────
 # Uses the SAME key as the main bot. If unset, fails, or is rate-limited, the
@@ -41,6 +60,9 @@ REPLY_COOLDOWN = int(os.environ.get("REPLY_COOLDOWN", "30"))
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+GEMINI_MAX_TOKENS = int(os.environ.get("GEMINI_MAX_TOKENS", "400"))
+GEMINI_RETRIES = 2          # total attempts on 429/5xx
+GEMINI_RETRY_DELAY = 2.0    # seconds between attempts
 
 # Persona/grounding the AI must stay within. Keeps answers accurate & on-topic.
 AI_SYSTEM_PROMPT = (
@@ -54,7 +76,7 @@ AI_SYSTEM_PROMPT = (
     "the admin's settings, never ask for passwords, login codes, or payment.\n\n"
     "STRICT TOPIC LOCK — THIS IS YOUR MOST IMPORTANT RULE:\n"
     "You ONLY talk about OmniGate (@omnigatebot): join requests, pending requests, access, "
-    "approvals, safety of this process, and the two commands below. NOTHING ELSE.\n"
+    "approvals, safety of this process, and the commands below. NOTHING ELSE.\n"
     "If the user asks about ANYTHING outside OmniGate — general knowledge, coding, math, news, "
     "advice, jokes, other apps, personal questions, 'what can you do', 'who are you' beyond your "
     "OmniGate role, etc. — you MUST politely REFUSE and redirect. Do NOT answer the off-topic part "
@@ -63,17 +85,22 @@ AI_SYSTEM_PROMPT = (
     "anything about OmniGate or your pending members I can help with?'\n\n"
     "COMMANDS the admin can send you in this chat:\n"
     "- /autoacceptoff  -> stop auto-accepting old pending requests\n"
-    "- /autoaccepton   -> resume auto-accepting\n\n"
+    "- /autoaccepton   -> resume auto-accepting\n"
+    "- /status         -> check whether auto-accept is currently ON or OFF\n"
+    "- /help           -> list the available commands\n\n"
+    "NOTE: The user's message may contain several short lines — that just means they sent "
+    "multiple quick messages. Read them together as ONE question and give ONE answer.\n\n"
     "RULES:\n"
     "- ALWAYS reply in ENGLISH only, regardless of what language the user writes in. "
     "Never reply in Tagalog or any other language.\n"
-    "- Keep replies SHORT (1-3 sentences), warm, and clear.\n"
+    "- Keep replies SHORT (1-3 sentences), warm, clear, and COMPLETE — always finish your "
+    "sentence, never trail off.\n"
     "- Stay 100% on OmniGate. When in doubt whether something is on-topic, treat it as off-topic "
     "and redirect.\n"
     "- For detailed OmniGate features/pricing/settings: give a brief answer and point to the main "
     "bot @omnigatebot. Do NOT invent specifics, prices, or settings.\n"
     "- Never claim to be a human. Never ask for passwords, codes, or payment.\n"
-    "- Plain text only. No markdown, no code blocks."
+    "- Plain text only. No markdown, no code blocks, no asterisks."
 )
 
 REACTION_POOL = ["\U0001F44D", "\U0001F525", "\U0001F44C", "\u2764\uFE0F",
@@ -81,8 +108,6 @@ REACTION_POOL = ["\U0001F44D", "\U0001F525", "\U0001F44C", "\u2764\uFE0F",
                  "\U0001F60D", "\U0001F4AF", "\U0001F64C", "\U0001F914"]
 
 # ── FIRST-CONTACT INTRO ───────────────────────────────────────────────
-# Shown the FIRST time a user ever messages this account. Explains what it is
-# and how it works, so people aren't confused about who they're talking to.
 INTRO_MESSAGES = [
     (
         "\U0001F44B Hi! This is the <b>OmniGate Helper</b>, working alongside the main bot "
@@ -95,7 +120,9 @@ INTRO_MESSAGES = [
         "never at risk.\n\n"
         "\u2699\uFE0F <b>Commands (send here in this chat):</b>\n"
         "\u2022 <code>/autoacceptoff</code> \u2014 stop auto-accepting old pending requests\n"
-        "\u2022 <code>/autoaccepton</code> \u2014 resume auto-accepting\n\n"
+        "\u2022 <code>/autoaccepton</code> \u2014 resume auto-accepting\n"
+        "\u2022 <code>/status</code> \u2014 check if auto-accept is ON or OFF\n"
+        "\u2022 <code>/help</code> \u2014 show this command list again\n\n"
         "Any OmniGate questions? Just ask."
     ),
     (
@@ -108,10 +135,22 @@ INTRO_MESSAGES = [
         "your settings, never ask for logins, codes, or money, and your account stays perfectly safe.\n\n"
         "\u2699\uFE0F <b>Commands (just send them here):</b>\n"
         "\u2022 <code>/autoacceptoff</code> \u2014 turn OFF auto-accept\n"
-        "\u2022 <code>/autoaccepton</code> \u2014 turn it back ON\n\n"
+        "\u2022 <code>/autoaccepton</code> \u2014 turn it back ON\n"
+        "\u2022 <code>/status</code> \u2014 check current status\n"
+        "\u2022 <code>/help</code> \u2014 show commands\n\n"
         "Feel free to ask any OmniGate question."
     ),
 ]
+
+HELP_MESSAGE = (
+    "\u2699\uFE0F <b>OmniGate Helper \u2014 Commands</b>\n\n"
+    "\u2022 <code>/autoacceptoff</code> \u2014 stop auto-accepting old pending requests\n"
+    "\u2022 <code>/autoaccepton</code> \u2014 resume auto-accepting\n"
+    "\u2022 <code>/status</code> \u2014 check whether auto-accept is ON or OFF\n"
+    "\u2022 <code>/help</code> \u2014 show this list\n\n"
+    "For everything else about OmniGate \u2014 features, settings, setup \u2014 the main bot "
+    "<b>@omnigatebot</b> has the full admin tools. \U0001F64C"
+)
 
 KEYWORD_RULES = [
     {
@@ -182,13 +221,14 @@ KEYWORD_RULES = [
         "replies": [
             "\u2699\uFE0F <b>OmniGate Helper commands:</b>\n"
             "\u2022 <code>/autoacceptoff</code> \u2014 stop auto-accepting old pending requests\n"
-            "\u2022 <code>/autoaccepton</code> \u2014 resume auto-accepting\n\n"
+            "\u2022 <code>/autoaccepton</code> \u2014 resume auto-accepting\n"
+            "\u2022 <code>/status</code> \u2014 check current status\n\n"
             "If it's about a join request, it's handled automatically. For anything else about "
             "@omnigatebot, just ask. \U0001F64F",
             "Happy to help! \u2699\uFE0F You can send <code>/autoacceptoff</code> to stop auto-accepting, "
             "or <code>/autoaccepton</code> to resume. Anything else about OmniGate \u2014 ask away.",
-            "Sure \u2014 the main commands are <code>/autoacceptoff</code> and <code>/autoaccepton</code>. "
-            "For other OmniGate questions, the admin tools live in @omnigatebot. \U0001F64C",
+            "Sure \u2014 the main commands are <code>/autoacceptoff</code>, <code>/autoaccepton</code>, and "
+            "<code>/status</code>. For other OmniGate questions, the admin tools live in @omnigatebot. \U0001F64C",
         ],
     },
     {
@@ -226,20 +266,74 @@ DEFAULT_REPLIES = [
     "OmniGate question? I'm happy to help.",
 ]
 
-_last_reply_time = {}
+# Replies for non-text messages (stickers, photos, voice notes, etc.)
+MEDIA_REPLIES = [
+    "I can only read <b>text messages</b>. \U0001F60A If you have a question about OmniGate or your "
+    "join request, just type it out and I'll help!",
+    "Nice one! \U0001F44D I can't process media though \u2014 send me a text message if you need help "
+    "with OmniGate or your pending request.",
+    "I only understand text. \U0001F916 Type your OmniGate question and I'll get right to it!",
+]
+
+# ── Runtime state ─────────────────────────────────────────────────────
 _last_reply_text = {}
 _last_emoji = {}
-_seen_users = set()          # users who have messaged before (so intro shows once)
-_auto_accept_off = set()     # admins who turned auto-accept OFF (in-memory, this session)
+_seen_users = set()          # users who have messaged before (so intro shows once) — persisted
+_auto_accept_off = set()     # admins who turned auto-accept OFF — persisted
 _msg_count = defaultdict(int)
+_reply_times = defaultdict(deque)   # user_id -> deque of reply timestamps (hourly cap)
+_pending = {}                # user_id -> {"texts": [...], "event": ev, "task": task, "media_only": bool}
+
+# Short rolling conversation history per user (for AI context). Kept tiny on purpose.
+_history = defaultdict(list)  # user_id -> [("user"/"model", text), ...]
+_HISTORY_MAX = 6
 
 
-def on_cooldown(user_id):
+# ── Persistence ───────────────────────────────────────────────────────
+def load_state():
+    global _seen_users, _auto_accept_off
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _seen_users = set(int(x) for x in data.get("seen_users", []))
+        _auto_accept_off = set(int(x) for x in data.get("auto_accept_off", []))
+        log.info("State loaded: %d seen users, %d auto-accept-off", len(_seen_users), len(_auto_accept_off))
+    except FileNotFoundError:
+        log.info("No state file yet (%s) — starting fresh.", STATE_FILE)
+    except Exception as e:
+        log.warning("Failed to load state (%s) — starting fresh.", e)
+
+
+def save_state():
+    try:
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({
+                "seen_users": sorted(_seen_users),
+                "auto_accept_off": sorted(_auto_accept_off),
+            }, f)
+        os.replace(tmp, STATE_FILE)
+    except Exception as e:
+        log.warning("Failed to save state: %s", e)
+
+
+def mark_seen(user_id):
+    if user_id not in _seen_users:
+        _seen_users.add(user_id)
+        save_state()
+
+
+# ── Anti-spam (rolling hourly cap; replaces the old hard 30s drop) ────
+def over_hourly_cap(user_id):
+    dq = _reply_times[user_id]
     now = time.time()
-    if now - _last_reply_time.get(user_id, 0) < REPLY_COOLDOWN:
-        return True
-    _last_reply_time[user_id] = now
-    return False
+    while dq and now - dq[0] > 3600:
+        dq.popleft()
+    return len(dq) >= MAX_REPLIES_PER_HOUR
+
+
+def record_reply(user_id):
+    _reply_times[user_id].append(time.time())
 
 
 def pick_non_repeating(user_id, options):
@@ -263,9 +357,13 @@ def match_rule(text):
     return None
 
 
-# Short rolling conversation history per user (for AI context). Kept tiny on purpose.
-_history = defaultdict(list)  # user_id -> [("user"/"model", text), ...]
-_HISTORY_MAX = 6
+# ── Gemini ────────────────────────────────────────────────────────────
+def _trim_to_last_sentence(text):
+    """If output was cut off (MAX_TOKENS), keep only up to the last finished sentence."""
+    cut = max(text.rfind("."), text.rfind("!"), text.rfind("?"))
+    if cut >= 20:  # keep only if a reasonable amount survives
+        return text[:cut + 1].strip()
+    return ""
 
 
 async def ai_reply(user_id, text):
@@ -286,11 +384,18 @@ async def ai_reply(user_id, text):
 
     payload = {
         "contents": contents,
-        "generationConfig": {"temperature": 0.6, "maxOutputTokens": 180},
+        "generationConfig": {
+            "temperature": 0.6,
+            "maxOutputTokens": GEMINI_MAX_TOKENS,
+            # CRITICAL: gemini-2.5 models spend "thinking" tokens INSIDE maxOutputTokens
+            # by default, which was eating the budget and cutting replies mid-sentence.
+            # thinkingBudget: 0 disables thinking -> full budget goes to the reply.
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }
 
     def _do_request():
-        """Blocking HTTP POST using only the Python standard library (no 'requests' needed)."""
+        """Blocking HTTP POST using only the Python standard library."""
         import json as _json
         import urllib.request
         import urllib.error
@@ -304,18 +409,48 @@ async def ai_reply(user_id, text):
                 return r.status, r.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            return -1, str(e)
 
     try:
         import json as _json
-        status, raw = await asyncio.to_thread(_do_request)
+        status, raw = -1, ""
+        for attempt in range(GEMINI_RETRIES):
+            status, raw = await asyncio.to_thread(_do_request)
+            if status == 200:
+                break
+            if status in (429, 500, 503, -1) and attempt < GEMINI_RETRIES - 1:
+                log.warning("Gemini HTTP %s (attempt %d) — retrying in %.1fs",
+                            status, attempt + 1, GEMINI_RETRY_DELAY)
+                await asyncio.sleep(GEMINI_RETRY_DELAY)
+            else:
+                break
         if status != 200:
-            log.warning("Gemini HTTP %s: %s — falling back to keywords", status, raw[:300])
+            log.warning("Gemini HTTP %s: %s — falling back to keywords", status, str(raw)[:300])
             return None
+
         data = _json.loads(raw)
-        out = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        cand = data.get("candidates", [{}])[0]
+        finish = cand.get("finishReason", "")
+        parts = cand.get("content", {}).get("parts", [])
+        # Join ALL text parts, skipping internal "thought" parts (2.5 models can
+        # return multiple parts — taking only parts[0] was another cut-off cause).
+        out = "".join(
+            p.get("text", "") for p in parts
+            if isinstance(p, dict) and not p.get("thought")
+        ).strip()
+
         if not out:
-            log.warning("Gemini returned empty text — falling back to keywords")
+            log.warning("Gemini returned empty text (finishReason=%s) — falling back", finish)
             return None
+        if finish == "MAX_TOKENS":
+            trimmed = _trim_to_last_sentence(out)
+            if not trimmed:
+                log.warning("Gemini output truncated beyond repair — falling back to keywords")
+                return None
+            log.info("Gemini output hit MAX_TOKENS — trimmed to last full sentence")
+            out = trimmed
+
         # Record turns for context
         _history[user_id].append(("user", text[:800]))
         _history[user_id].append(("model", out))
@@ -327,16 +462,112 @@ async def ai_reply(user_id, text):
         return None
 
 
-def build_reply(user_id, text, is_first_contact):
-    # On the very first message, always lead with the clear intro
-    if is_first_contact:
-        return pick_non_repeating(user_id, INTRO_MESSAGES)
+def build_keyword_reply(user_id, text):
     rule = match_rule(text)
     if rule:
         return pick_non_repeating(user_id, rule["replies"])
     return pick_non_repeating(user_id, DEFAULT_REPLIES)
 
 
+# ── Sending ───────────────────────────────────────────────────────────
+async def send_reply(event, user_id, reply_html, tag):
+    """Send with a natural typing delay. reply_html must already be HTML-safe."""
+    try:
+        async with event.client.action(event.chat_id, "typing"):
+            await asyncio.sleep(min(1.5 + len(reply_html) * 0.01, 4))
+        await event.reply(reply_html, parse_mode="html")
+        record_reply(user_id)
+        log.info("Replied to %s (%s): %.50s", user_id, tag, reply_html)
+    except Exception as e:
+        # If HTML parsing somehow fails, retry once as plain text so the user
+        # is never left with NO reply (this was a silent-failure case before).
+        log.warning("Reply failed (%s) — retrying as plain text", e)
+        try:
+            plain = re.sub(r"<[^>]+>", "", reply_html)
+            await event.reply(plain, parse_mode=None)
+            record_reply(user_id)
+        except Exception as e2:
+            log.warning("Plain-text retry also failed: %s", e2)
+
+
+async def flush_pending(user_id):
+    """Runs after the debounce window: combine the user's rapid messages into
+    ONE text and send ONE coherent reply."""
+    try:
+        await asyncio.sleep(DEBOUNCE_SECONDS)
+    except asyncio.CancelledError:
+        return  # a newer message arrived; the new task will handle everything
+
+    slot = _pending.pop(user_id, None)
+    if not slot:
+        return
+    event = slot["event"]
+    combined = "\n".join(t for t in slot["texts"] if t).strip()
+    is_first_contact = user_id not in _seen_users
+    mark_seen(user_id)
+
+    if over_hourly_cap(user_id):
+        log.info("Skipped reply to %s (hourly cap %d reached)", user_id, MAX_REPLIES_PER_HOUR)
+        return
+
+    # First contact always gets the clear intro (with safety + commands)
+    if is_first_contact:
+        await send_reply(event, user_id, pick_non_repeating(user_id, INTRO_MESSAGES), "intro")
+        return
+
+    # Media-only (stickers, photos, voice) with no text
+    if not combined:
+        if slot.get("media"):
+            await send_reply(event, user_id, pick_non_repeating(user_id, MEDIA_REPLIES), "media")
+        return
+
+    # AI first (HTML-escaped so Gemini output can never break the send), keyword fallback
+    ai = await ai_reply(user_id, combined)
+    if ai:
+        await send_reply(event, user_id, html.escape(ai), "ai")
+    else:
+        await send_reply(event, user_id, build_keyword_reply(user_id, combined), "keyword")
+
+
+# ── Commands ──────────────────────────────────────────────────────────
+async def handle_command(event, user_id, cmd):
+    mark_seen(user_id)
+    if cmd.startswith("/start"):
+        await send_reply(event, user_id, pick_non_repeating(user_id, INTRO_MESSAGES), "cmd:start")
+    elif cmd.startswith("/autoacceptoff"):
+        _auto_accept_off.add(user_id)
+        save_state()
+        await send_reply(event, user_id,
+            "\U0001F6D1 <b>Auto-accept turned OFF.</b>\n\n"
+            "The OmniGate Helper will stop auto-accepting old pending requests for you. "
+            "Send <code>/autoaccepton</code> anytime to turn it back on.", "cmd:off")
+        log.info("Auto-accept OFF requested by %s", user_id)
+    elif cmd.startswith("/autoaccepton"):
+        _auto_accept_off.discard(user_id)
+        save_state()
+        await send_reply(event, user_id,
+            "\u2705 <b>Auto-accept turned ON.</b>\n\n"
+            "The OmniGate Helper will resume auto-accepting old pending requests. "
+            "Send <code>/autoacceptoff</code> to stop it again.", "cmd:on")
+        log.info("Auto-accept ON requested by %s", user_id)
+    elif cmd.startswith("/status"):
+        if user_id in _auto_accept_off:
+            msg = ("\U0001F6D1 <b>Status: auto-accept is OFF</b> for you.\n\n"
+                   "Send <code>/autoaccepton</code> to resume auto-accepting old pending requests.")
+        else:
+            msg = ("\u2705 <b>Status: auto-accept is ON.</b>\n\n"
+                   "Old pending join requests are being cleared automatically. "
+                   "Send <code>/autoacceptoff</code> to stop.")
+        await send_reply(event, user_id, msg, "cmd:status")
+    elif cmd.startswith("/help"):
+        await send_reply(event, user_id, HELP_MESSAGE, "cmd:help")
+    else:
+        await send_reply(event, user_id,
+            "\U0001F914 I don't recognize that command. Send <code>/help</code> to see what I can do.",
+            "cmd:unknown")
+
+
+# ── Client ────────────────────────────────────────────────────────────
 if SESSION_STRING:
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 else:
@@ -352,33 +583,22 @@ async def handle_dm(event):
         return
 
     user_id = event.sender_id
-    text = event.raw_text or ""
+    text = (event.raw_text or "").strip()
     _msg_count[user_id] += 1
-    is_first_contact = user_id not in _seen_users
 
-    # ── Commands (checked first) ──────────────────────────────────────
-    cmd = text.strip().lower()
-    if cmd.startswith("/autoacceptoff"):
-        _auto_accept_off.add(user_id)
-        _seen_users.add(user_id)
-        await event.reply(
-            "\U0001F6D1 <b>Auto-accept turned OFF.</b>\n\n"
-            "The OmniGate Helper will stop auto-accepting old pending requests for you. "
-            "Send <code>/autoaccepton</code> anytime to turn it back on.",
-            parse_mode="html"
-        )
-        log.info("Auto-accept OFF requested by %s", user_id)
-        return
-    if cmd.startswith("/autoaccepton"):
-        _auto_accept_off.discard(user_id)
-        _seen_users.add(user_id)
-        await event.reply(
-            "\u2705 <b>Auto-accept turned ON.</b>\n\n"
-            "The OmniGate Helper will resume auto-accepting old pending requests. "
-            "Send <code>/autoacceptoff</code> to stop it again.",
-            parse_mode="html"
-        )
-        log.info("Auto-accept ON requested by %s", user_id)
+    # Mark as read right away — looks natural and responsive
+    try:
+        await client.send_read_acknowledge(event.chat_id, event.message)
+    except Exception:
+        pass
+
+    # Commands are handled IMMEDIATELY (never debounced, never rate-limited away)
+    if text.lower().startswith("/"):
+        # Cancel any pending debounce so the command answer isn't duplicated
+        slot = _pending.pop(user_id, None)
+        if slot and slot.get("task"):
+            slot["task"].cancel()
+        await handle_command(event, user_id, text.lower())
         return
 
     # Optional auto-react (OFF by default — raises ban risk)
@@ -394,44 +614,37 @@ async def handle_dm(event):
         except Exception as e:
             log.warning("React failed: %s", e)
 
-    # First contact always gets the intro (bypasses cooldown so it's never missed)
-    if not is_first_contact and on_cooldown(user_id):
-        log.info("Skipped reply to %s (cooldown)", user_id)
-        _seen_users.add(user_id)
-        return
-
-    # First contact: fixed intro (with safety + commands). Otherwise: AI first, keyword fallback.
-    if is_first_contact:
-        reply = pick_non_repeating(user_id, INTRO_MESSAGES)
+    # ── Debounce: collect rapid messages, reply ONCE ──────────────────
+    slot = _pending.get(user_id)
+    if slot:
+        if slot.get("task"):
+            slot["task"].cancel()
     else:
-        reply = await ai_reply(user_id, text)
-        if not reply:
-            reply = build_reply(user_id, text, False)
-    _seen_users.add(user_id)
-    _last_reply_time[user_id] = time.time()
-
-    try:
-        async with client.action(event.chat_id, "typing"):
-            await asyncio.sleep(min(1.5 + len(reply) * 0.01, 4))
-        await event.reply(reply, parse_mode="html")
-        log.info("Replied to %s (%s): %.50s",
-                 user_id, "intro" if is_first_contact else "keyword", reply)
-    except Exception as e:
-        log.warning("Reply failed: %s", e)
+        slot = {"texts": [], "media": False}
+        _pending[user_id] = slot
+    if text:
+        slot["texts"].append(text)
+    if event.message.media:
+        slot["media"] = True
+    slot["event"] = event  # reply to the latest message
+    slot["task"] = asyncio.create_task(flush_pending(user_id))
 
 
 def main():
     if not SESSION_STRING:
         log.error("No SESSION_STRING. Run login.py locally first to generate one.")
         return
-    log.info("OmniGate Helper userbot (v12) starting...")
+    log.info("OmniGate Helper userbot (v%s) starting...", VERSION)
+    load_state()
     if GEMINI_API_KEY:
-        log.info("Gemini AI: ENABLED (key detected, model=%s)", GEMINI_MODEL)
+        log.info("Gemini AI: ENABLED (key detected, model=%s, maxTokens=%d, thinking=OFF)",
+                 GEMINI_MODEL, GEMINI_MAX_TOKENS)
     else:
         log.warning("Gemini AI: DISABLED — GEMINI_API_KEY not set. Add it in this service's "
                     "Variables to enable natural replies. Using keyword replies for now.")
     client.start()
-    log.info("Online. AUTO_REACT=%s, REPLY_COOLDOWN=%ss", AUTO_REACT, REPLY_COOLDOWN)
+    log.info("Online. AUTO_REACT=%s, DEBOUNCE=%.1fs, HOURLY_CAP=%d, STATE_FILE=%s",
+             AUTO_REACT, DEBOUNCE_SECONDS, MAX_REPLIES_PER_HOUR, STATE_FILE)
     client.run_until_disconnected()
 
 
