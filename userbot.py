@@ -726,11 +726,6 @@ def main():
         return
     log.info("OmniGate Helper userbot (v%s) starting...", VERSION)
     load_state()
-    # Warm the knowledge cache before going online (falls back gracefully on failure)
-    try:
-        asyncio.run(refresh_facts(force=True))
-    except Exception as e:
-        log.warning("Initial facts load failed (%s) — will retry on first message.", e)
     if GEMINI_API_KEY:
         log.info("Gemini AI: ENABLED (key detected, model=%s, maxTokens=%d, thinking=OFF)",
                  GEMINI_MODEL, GEMINI_MAX_TOKENS)
@@ -738,6 +733,12 @@ def main():
         log.warning("Gemini AI: DISABLED — GEMINI_API_KEY not set. Add it in this service's "
                     "Variables to enable natural replies. Using keyword replies for now.")
     client.start()
+    # Warm the knowledge cache using Telethon's OWN loop (safe — does not create
+    # or close a separate loop). Falls back to built-in facts on any failure.
+    try:
+        client.loop.run_until_complete(refresh_facts(force=True))
+    except Exception as e:
+        log.warning("Initial facts load failed (%s) — will retry on first message.", e)
     log.info("Online. AUTO_REACT=%s, DEBOUNCE=%.1fs, HOURLY_CAP=%d, STATE_FILE=%s",
              AUTO_REACT, DEBOUNCE_SECONDS, MAX_REPLIES_PER_HOUR, STATE_FILE)
     client.run_until_disconnected()
